@@ -1,0 +1,23 @@
+# data
+data/
+hf_cache/
+
+# checkpoints / logs
+checkpoints/
+runs/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# environments
+.venv/
+env/
+
+# large/reference repos
+refs/
+
+# IDE
+.vscode/
+.idea/
