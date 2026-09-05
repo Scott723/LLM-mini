@@ -4,150 +4,346 @@ from dataclasses import dataclass
 @dataclass
 class ModelConfig:
     """
-    Configuration of the MyQwen3.5 text backbone.
+    Architecture configuration for a decoder-only language model.
 
     This config only describes model architecture.
     Training hyperparameters such as learning rate, batch size,
-    and training steps should not be placed here.
+    optimizer and training steps should be defined elsewhere.
     """
 
-    # ------------------------------------------------------------------
-    # Vocabulary / basic model dimensions
-    # ------------------------------------------------------------------
+    # ==============================================================
+    # Basic model dimensions
+    # ==============================================================
+
     vocab_size: int
 
     hidden_size: int
     num_hidden_layers: int
     intermediate_size: int
 
-    # ------------------------------------------------------------------
-    # Full Attention
-    # ------------------------------------------------------------------
+    # ==============================================================
+    # Attention dimensions
+    #
+    # MHA:
+    #   num_attention_heads == num_key_value_heads
+    #
+    # GQA:
+    #   1 < num_key_value_heads < num_attention_heads
+    #
+    # MQA:
+    #   num_key_value_heads == 1
+    # ==============================================================
+
     num_attention_heads: int
     num_key_value_heads: int
     head_dim: int
 
-    # ------------------------------------------------------------------
-    # Gated DeltaNet
-    # ------------------------------------------------------------------
-    linear_num_key_heads: int
-    linear_num_value_heads: int
+    # ==============================================================
+    # Attention options
+    # ==============================================================
 
-    linear_key_head_dim: int
-    linear_value_head_dim: int
+    qk_norm: bool = False
+    attention_output_gate: bool = False
 
-    linear_conv_kernel_dim: int
-
-    # ------------------------------------------------------------------
-    # RoPE
-    # ------------------------------------------------------------------
-    rope_theta: float
-    partial_rotary_factor: float
-
-    # ------------------------------------------------------------------
-    # Normalization / activation
-    # ------------------------------------------------------------------
-    rms_norm_eps: float = 1e-6
-    hidden_act: str = "silu"
-
-    # ------------------------------------------------------------------
-    # Hybrid architecture
-    # Every N-th layer is Full Attention.
-    # Other layers use Gated DeltaNet.
-    # ------------------------------------------------------------------
-    full_attention_interval: int = 4
-
-    # ------------------------------------------------------------------
-    # Other architectural settings
-    # ------------------------------------------------------------------
+    attention_bias: bool = False
     attention_dropout: float = 0.0
-    use_bias: bool = False
-    tie_word_embeddings: bool = True
 
-    initializer_range: float = 0.02
+    # ==============================================================
+    # Position embedding
+    #
+    # Supported:
+    #   "rope"
+    #   "sinusoidal"
+    #
+    # partial_rotary_factor:
+    #   1.0  -> Full RoPE
+    #   <1.0 -> Partial RoPE
+    # ==============================================================
 
-    # Maximum context supported by this Stage.
+    position_embedding_type: str = "rope"
+
+    rope_theta: float = 10_000.0
+    partial_rotary_factor: float = 1.0
+
     max_position_embeddings: int = 512
 
-    # ------------------------------------------------------------------
+    # ==============================================================
+    # Normalization
+    # ==============================================================
+
+    norm_type: str = "rmsnorm"
+    norm_eps: float = 1e-6
+
+    # ==============================================================
+    # Feed Forward Network
+    # ==============================================================
+
+    mlp_type: str = "swiglu"
+    hidden_act: str = "silu"
+
+    mlp_bias: bool = False
+
+    # ==============================================================
+    # Mixer layout
+    #
+    # Standard Transformer:
+    #   ("attention",)
+    #
+    # Qwen3.5-like hybrid:
+    #   (
+    #       "gated_deltanet",
+    #       "gated_deltanet",
+    #       "gated_deltanet",
+    #       "attention",
+    #   )
+    # ==============================================================
+
+    mixer_pattern: tuple[str, ...] = ("attention",)
+
+    # ==============================================================
+    # Gated DeltaNet
+    #
+    # Only used when mixer_pattern contains "gated_deltanet".
+    # ==============================================================
+
+    linear_num_key_heads: int | None = None
+    linear_num_value_heads: int | None = None
+
+    linear_key_head_dim: int | None = None
+    linear_value_head_dim: int | None = None
+
+    linear_conv_kernel_dim: int | None = None
+
+    # ==============================================================
+    # Embedding / initialization
+    # ==============================================================
+
+    tie_word_embeddings: bool = True
+    initializer_range: float = 0.02
+
+    # ==============================================================
     # Derived properties
-    # ------------------------------------------------------------------
-    @property
-    def rotary_dim(self) -> int:
-        """
-        Number of dimensions in each attention head that receive RoPE.
-        Qwen3.5 uses partial RoPE.
-        """
-        return int(self.head_dim * self.partial_rotary_factor)
+    # ==============================================================
 
     @property
     def attention_q_dim(self) -> int:
-        return self.num_attention_heads * self.head_dim
+        return (
+            self.num_attention_heads
+            * self.head_dim
+        )
 
     @property
     def attention_kv_dim(self) -> int:
-        return self.num_key_value_heads * self.head_dim
+        return (
+            self.num_key_value_heads
+            * self.head_dim
+        )
 
     @property
-    def linear_key_dim(self) -> int:
-        return self.linear_num_key_heads * self.linear_key_head_dim
+    def rotary_dim(self) -> int:
+        return int(
+            self.head_dim
+            * self.partial_rotary_factor
+        )
 
     @property
-    def linear_value_dim(self) -> int:
-        return self.linear_num_value_heads * self.linear_value_head_dim
+    def num_key_value_groups(self) -> int:
+        return (
+            self.num_attention_heads
+            // self.num_key_value_heads
+        )
 
     @property
     def layer_types(self) -> list[str]:
         """
-        Example for 8 layers:
+        Expand mixer_pattern to all decoder layers.
+
+        Example:
+
+        mixer_pattern =
+            ("gated_deltanet",
+             "gated_deltanet",
+             "gated_deltanet",
+             "attention")
+
+        num_hidden_layers = 8
+
+        gives:
+
         [
-            "linear_attention",
-            "linear_attention",
-            "linear_attention",
-            "full_attention",
-            "linear_attention",
-            "linear_attention",
-            "linear_attention",
-            "full_attention",
+            "gated_deltanet",
+            "gated_deltanet",
+            "gated_deltanet",
+            "attention",
+            "gated_deltanet",
+            "gated_deltanet",
+            "gated_deltanet",
+            "attention",
         ]
         """
+
+        pattern_length = len(
+            self.mixer_pattern
+        )
+
         return [
-            "full_attention"
-            if (layer_idx + 1) % self.full_attention_interval == 0
-            else "linear_attention"
-            for layer_idx in range(self.num_hidden_layers)
+            self.mixer_pattern[
+                layer_idx % pattern_length
+            ]
+            for layer_idx
+            in range(self.num_hidden_layers)
         ]
+
+    @property
+    def linear_key_dim(self) -> int | None:
+        if (
+            self.linear_num_key_heads is None
+            or self.linear_key_head_dim is None
+        ):
+            return None
+
+        return (
+            self.linear_num_key_heads
+            * self.linear_key_head_dim
+        )
+
+    @property
+    def linear_value_dim(self) -> int | None:
+        if (
+            self.linear_num_value_heads is None
+            or self.linear_value_head_dim is None
+        ):
+            return None
+
+        return (
+            self.linear_num_value_heads
+            * self.linear_value_head_dim
+        )
+
+    # ==============================================================
+    # Validation
+    # ==============================================================
 
     def __post_init__(self):
         self._validate()
 
     def _validate(self):
-        # GQA requires Q heads to be divisible by KV heads.
-        if self.num_attention_heads % self.num_key_value_heads != 0:
+
+        # ------------------------------
+        # Attention
+        # ------------------------------
+
+        if (
+            self.num_attention_heads
+            % self.num_key_value_heads
+            != 0
+        ):
             raise ValueError(
-                "num_attention_heads must be divisible by "
-                "num_key_value_heads"
+                "num_attention_heads must be "
+                "divisible by num_key_value_heads"
             )
 
-        # RoPE rotates dimensions in pairs.
-        if self.rotary_dim % 2 != 0:
+        if self.head_dim <= 0:
             raise ValueError(
-                f"rotary_dim must be even, got {self.rotary_dim}"
+                "head_dim must be positive"
             )
 
-        if not (0.0 < self.partial_rotary_factor <= 1.0):
+        # ------------------------------
+        # Position embedding
+        # ------------------------------
+
+        if self.position_embedding_type not in {
+            "rope",
+            "sinusoidal",
+        }:
             raise ValueError(
-                "partial_rotary_factor must be in (0, 1]"
+                "position_embedding_type must be "
+                "'rope' or 'sinusoidal'"
             )
 
-        if self.num_hidden_layers % self.full_attention_interval != 0:
+        if self.position_embedding_type == "rope":
+
+            if not (
+                0.0
+                < self.partial_rotary_factor
+                <= 1.0
+            ):
+                raise ValueError(
+                    "partial_rotary_factor must "
+                    "be in (0, 1]"
+                )
+
+            if self.rotary_dim % 2 != 0:
+                raise ValueError(
+                    "rotary_dim must be even, "
+                    f"got {self.rotary_dim}"
+                )
+
+        # ------------------------------
+        # Norm
+        # ------------------------------
+
+        if self.norm_type not in {
+            "rmsnorm",
+            "layernorm",
+        }:
             raise ValueError(
-                "For the current 3:1 hybrid layout, "
-                "num_hidden_layers should be divisible by "
-                "full_attention_interval."
+                "Unsupported norm_type: "
+                f"{self.norm_type}"
             )
 
-        if self.linear_conv_kernel_dim <= 0:
+        # ------------------------------
+        # MLP
+        # ------------------------------
+
+        if self.mlp_type not in {
+            "standard",
+            "swiglu",
+        }:
             raise ValueError(
-                "linear_conv_kernel_dim must be positive"
+                "Unsupported mlp_type: "
+                f"{self.mlp_type}"
             )
+
+        # ------------------------------
+        # Mixer
+        # ------------------------------
+
+        if len(self.mixer_pattern) == 0:
+            raise ValueError(
+                "mixer_pattern cannot be empty"
+            )
+
+        # ------------------------------
+        # Gated DeltaNet
+        # ------------------------------
+
+        if (
+            "gated_deltanet"
+            in self.mixer_pattern
+        ):
+            required = {
+                "linear_num_key_heads":
+                    self.linear_num_key_heads,
+                "linear_num_value_heads":
+                    self.linear_num_value_heads,
+                "linear_key_head_dim":
+                    self.linear_key_head_dim,
+                "linear_value_head_dim":
+                    self.linear_value_head_dim,
+                "linear_conv_kernel_dim":
+                    self.linear_conv_kernel_dim,
+            }
+
+            missing = [
+                name
+                for name, value
+                in required.items()
+                if value is None
+            ]
+
+            if missing:
+                raise ValueError(
+                    "Gated DeltaNet requires: "
+                    + ", ".join(missing)
+                )

@@ -101,19 +101,8 @@ class RotaryEmbedding(nn.Module):
             persistent=False,
         )
 
+    @staticmethod
     def rotate_half(x: torch.Tensor) -> torch.Tensor:
-        """
-        Rotate half of the hidden dimensions.
-
-        If:
-            x = [x1 | x2]
-
-        then:
-            rotate_half(x) = [-x2 | x1]
-
-        The last dimension must be even.
-        """
-
         half_dim = x.shape[-1] // 2
 
         x1 = x[..., :half_dim]
