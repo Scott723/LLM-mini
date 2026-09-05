@@ -174,77 +174,77 @@ class RotaryEmbedding(nn.Module):
         return cos, sin
 
 
-def apply_rotary_pos_emb(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Apply Partial RoPE to Q and K.
+    def apply_rotary_pos_emb(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Apply Partial RoPE to Q and K.
 
-    Args:
-        q:
-            [B, num_q_heads, T, head_dim]
+        Args:
+            q:
+                [B, num_q_heads, T, head_dim]
 
-        k:
-            [B, num_kv_heads, T, head_dim]
+            k:
+                [B, num_kv_heads, T, head_dim]
 
-        cos / sin:
-            [B, T, rotary_dim]
+            cos / sin:
+                [B, T, rotary_dim]
 
-    Returns:
-        q_embed:
-            same shape as q
+        Returns:
+            q_embed:
+                same shape as q
 
-        k_embed:
-            same shape as k
-    """
+            k_embed:
+                same shape as k
+        """
 
-    # [B, T, rotary_dim]
-    # ->
-    # [B, 1, T, rotary_dim]
-    #
-    # The same positional rotation is broadcast
-    # across all attention heads.
-    cos = cos.unsqueeze(1)
-    sin = sin.unsqueeze(1)
+        # [B, T, rotary_dim]
+        # ->
+        # [B, 1, T, rotary_dim]
+        #
+        # The same positional rotation is broadcast
+        # across all attention heads.
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
 
-    rotary_dim = cos.shape[-1]
+        rotary_dim = cos.shape[-1]
 
-    # -------------------------
-    # Partial RoPE
-    # -------------------------
+        # -------------------------
+        # Partial RoPE
+        # -------------------------
 
-    q_rot = q[..., :rotary_dim]
-    q_pass = q[..., rotary_dim:]
+        q_rot = q[..., :rotary_dim]
+        q_pass = q[..., rotary_dim:]
 
-    k_rot = k[..., :rotary_dim]
-    k_pass = k[..., rotary_dim:]
+        k_rot = k[..., :rotary_dim]
+        k_pass = k[..., rotary_dim:]
 
-    # Standard RoPE:
-    #
-    # x' = x cos(theta) + R(x) sin(theta)
-    #
-    q_rot = (
-        q_rot * cos
-        + self.rotate_half(q_rot) * sin
-    )
+        # Standard RoPE:
+        #
+        # x' = x cos(theta) + R(x) sin(theta)
+        #
+        q_rot = (
+            q_rot * cos
+            + self.rotate_half(q_rot) * sin
+        )
 
-    k_rot = (
-        k_rot * cos
-        + self.rotate_half(k_rot) * sin
-    )
+        k_rot = (
+            k_rot * cos
+            + self.rotate_half(k_rot) * sin
+        )
 
-    # Put the untouched NoPE dimensions back.
-    q_embed = torch.cat(
-        (q_rot, q_pass),
-        dim=-1,
-    )
+        # Put the untouched NoPE dimensions back.
+        q_embed = torch.cat(
+            (q_rot, q_pass),
+            dim=-1,
+        )
 
-    k_embed = torch.cat(
-        (k_rot, k_pass),
-        dim=-1,
-    )
+        k_embed = torch.cat(
+            (k_rot, k_pass),
+            dim=-1,
+        )
 
-    return q_embed, k_embed
+        return q_embed, k_embed
