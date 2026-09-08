@@ -164,6 +164,7 @@ class RotaryEmbedding(nn.Module):
 
 
     def apply_rotary_pos_emb(
+        self,
         q: torch.Tensor,
         k: torch.Tensor,
         cos: torch.Tensor,

@@ -4,6 +4,7 @@ import torch.nn as nn
 from myqwen.config import ModelConfig
 from myqwen.norm import RMSNorm
 from myqwen.attention_utils import repeat_kv
+from myqwen.position_embedding import RotaryEmbedding
 
 
 

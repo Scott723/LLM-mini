@@ -27,19 +27,19 @@ class SwiGLUMLP(nn.Module):
         self.gate_proj = nn.Linear(
             self.hidden_size,
             self.intermediate_size,
-            bias=config.use_bias,
+            bias=config.mlp_bias
         )
 
         self.up_proj = nn.Linear(
             self.hidden_size,
             self.intermediate_size,
-            bias=config.use_bias,
+            bias=config.mlp_bias
         )
 
         self.down_proj = nn.Linear(
             self.intermediate_size,
             self.hidden_size,
-            bias=config.use_bias,
+            bias=config.mlp_bias
         )
 
         self.activation = get_activation(
@@ -64,13 +64,13 @@ class StandardMLP(nn.Module):
         self.up_proj = nn.Linear(
             config.hidden_size,
             config.intermediate_size,
-            bias=config.use_bias,
+            bias=config.mlp_bias
         )
 
         self.down_proj = nn.Linear(
             config.intermediate_size,
             config.hidden_size,
-            bias=config.use_bias,
+            bias=config.mlp_bias
         )
 
         self.activation = get_activation(
