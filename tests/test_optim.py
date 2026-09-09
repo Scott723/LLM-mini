@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from myqwen.optim import (
+from myqwen.training import (
     build_lr_scheduler,
     build_optimizer,
     cosine_lr_multiplier,

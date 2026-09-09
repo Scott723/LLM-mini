@@ -12,12 +12,12 @@ from myqwen.data import (
     build_dataloader,
     find_token_shards,
 )
-from myqwen.model import CausalLM
-from myqwen.optim import (
+
+from myqwen.modeling import CausalLM
+
+from myqwen.training import (
     build_lr_scheduler,
     build_optimizer,
-)
-from myqwen.trainer import (
     Trainer,
     TrainerConfig,
 )

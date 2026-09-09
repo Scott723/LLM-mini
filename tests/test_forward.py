@@ -1,7 +1,7 @@
 import torch
 
 from configs.config_a import MODEL_CONFIG
-from myqwen.model import CausalLM
+from myqwen.modeling import CausalLM
 
 
 def test_model_forward():

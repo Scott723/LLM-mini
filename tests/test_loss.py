@@ -1,8 +1,8 @@
 import torch
 
 from myqwen.config import ModelConfig
-from myqwen.loss import compute_causal_lm_loss
-from myqwen.model import CausalLM
+from myqwen.training import compute_causal_lm_loss
+from myqwen.modeling import CausalLM
 
 
 def build_test_config() -> ModelConfig:

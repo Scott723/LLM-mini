@@ -2,9 +2,12 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from myqwen.config import ModelConfig
-from myqwen.model import CausalLM
-from myqwen.optim import build_optimizer
-from myqwen.trainer import Trainer, TrainerConfig
+from myqwen.modeling import CausalLM
+from myqwen.training import (
+    build_optimizer,
+    Trainer,
+    TrainerConfig,
+)
 
 
 class TinyTokenDataset(Dataset):
