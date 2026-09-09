@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from myqwen.config import ModelConfig
-from myqwen.attention_utils import repeat_kv
+from myqwen.modeling.attention.utils import repeat_kv
 
 
 def elu_feature_map(x: torch.Tensor) -> torch.Tensor:

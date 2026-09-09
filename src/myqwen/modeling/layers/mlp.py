@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from myqwen.config import ModelConfig
-from myqwen.activations import get_activation
+from myqwen.modeling.layers.activations import get_activation
 
 
 class SwiGLUMLP(nn.Module):

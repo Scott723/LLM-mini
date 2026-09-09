@@ -10,7 +10,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 
-from myqwen.loss import compute_causal_lm_loss
+from myqwen.training.loss import compute_causal_lm_loss
 
 
 @dataclass

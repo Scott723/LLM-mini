@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 
 from myqwen.config import ModelConfig
-from myqwen.full_attention import SoftmaxAttention
-from myqwen.linear_attention import LinearAttention
-from myqwen.mlp import StandardMLP, SwiGLUMLP
-from myqwen.norm import LayerNorm, RMSNorm
+from myqwen.modeling.attention.full_attention import SoftmaxAttention
+from myqwen.modeling.attention.linear_attention import LinearAttention
+from myqwen.modeling.layers.mlp import StandardMLP, SwiGLUMLP
+from myqwen.modeling.layers.norm import LayerNorm, RMSNorm
 
 
 def build_norm(config: ModelConfig) -> nn.Module:

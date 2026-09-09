@@ -2,10 +2,9 @@ import torch
 import torch.nn as nn
 
 from myqwen.config import ModelConfig
-from myqwen.norm import RMSNorm
-from myqwen.attention_utils import repeat_kv
-from myqwen.position_embedding import RotaryEmbedding
-
+from myqwen.modeling.layers.norm import RMSNorm
+from myqwen.modeling.attention.utils import repeat_kv
+from myqwen.modeling.layers.position_embedding import RotaryEmbedding
 
 
 def scaled_dot_product_attention_eager(

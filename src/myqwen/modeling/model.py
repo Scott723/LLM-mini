@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from myqwen.block import DecoderBlock, build_norm
 from myqwen.config import ModelConfig
+from myqwen.modeling.block import DecoderBlock, build_norm
 
 
 class DecoderModel(nn.Module):
