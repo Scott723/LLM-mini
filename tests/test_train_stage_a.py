@@ -8,7 +8,7 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TRAIN_SCRIPT = PROJECT_ROOT / "scripts" / "train_stage_a.py"
+TRAIN_SCRIPT = PROJECT_ROOT / "scripts" / "train" / "train_stage_a.py"
 
 
 def make_tiny_token_shard(
