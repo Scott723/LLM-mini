@@ -21,3 +21,9 @@ refs/
 # IDE
 .vscode/
 .idea/
+
+# temp
+src/myqwen.egg-info/
+
+# log
+*.log
