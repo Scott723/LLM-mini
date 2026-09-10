@@ -12,6 +12,13 @@ from torch.utils.data import DataLoader
 
 from myqwen.training.logger import MetricLogger, NullLogger
 from myqwen.training.loss import compute_causal_lm_loss
+from myqwen.training.profiling import (
+    achieved_tflops,
+    estimate_mfu,
+    estimate_training_flops_per_token,
+    get_cuda_peak_memory,
+    reset_cuda_peak_memory,
+)
 
 
 CheckpointCallback = Callable[[dict[str, object]], None]
@@ -30,6 +37,7 @@ class TrainerConfig:
     eval_interval: int | None = None
     eval_max_batches: int | None = 500
     save_interval: int | None = None
+    device_peak_tflops: float | None = None
 
     def __post_init__(self) -> None:
         if self.max_steps <= 0:
@@ -48,6 +56,8 @@ class TrainerConfig:
             raise ValueError("eval_max_batches must be positive or None")
         if self.save_interval is not None and self.save_interval <= 0:
             raise ValueError("save_interval must be positive or None")
+        if self.device_peak_tflops is not None and self.device_peak_tflops <= 0:
+            raise ValueError("device_peak_tflops must be positive or None")
 
 
 def resolve_device(device: str) -> torch.device:
@@ -68,7 +78,7 @@ def cycle_dataloader(dataloader: DataLoader) -> Iterator[dict[str, torch.Tensor]
 
 
 class Trainer:
-    """Single-process causal-LM trainer with validation, logging, and resume state."""
+    """Single-process causal-LM trainer with validation, logging, resume, and profiling."""
 
     def __init__(
         self,
@@ -106,6 +116,11 @@ class Trainer:
         self.micro_step = 0
         self.tokens_seen = 0
         self.validation_history: list[dict[str, float | int]] = []
+
+        self._flops_per_token: float | None = None
+        self._profile_seq_len: int | None = None
+        self._run_peak_allocated_gib = 0.0
+        self._run_peak_reserved_gib = 0.0
 
     def state_dict(self) -> dict[str, object]:
         """Return the minimal Trainer state required to continue training."""
@@ -151,6 +166,32 @@ class Trainer:
             raise ValueError(f"input_ids must have shape [B, T], got {tuple(input_ids.shape)}")
         return input_ids.to(self.device, non_blocking=True)
 
+    def _prepare_mfu_estimator(self, seq_len: int) -> None:
+        if self.config.device_peak_tflops is None:
+            return
+
+        if self._profile_seq_len is not None and seq_len != self._profile_seq_len:
+            raise ValueError(
+                f"MFU estimator expected seq_len={self._profile_seq_len}, got seq_len={seq_len}"
+            )
+
+        if self._flops_per_token is None:
+            self._flops_per_token = estimate_training_flops_per_token(self.model, seq_len)
+            self._profile_seq_len = seq_len
+
+    def _update_training_peak_memory(self):
+        peak_memory = get_cuda_peak_memory(self.device)
+        if peak_memory is None:
+            return None
+
+        self._run_peak_allocated_gib = max(
+            self._run_peak_allocated_gib, peak_memory.allocated_gib
+        )
+        self._run_peak_reserved_gib = max(
+            self._run_peak_reserved_gib, peak_memory.reserved_gib
+        )
+        return peak_memory
+
     def _should_evaluate(self) -> bool:
         if self.config.eval_interval is None or self.eval_dataloader is None:
             return False
@@ -159,14 +200,12 @@ class Trainer:
     def _should_save_periodic_checkpoint(self) -> bool:
         if self.config.save_interval is None or self.checkpoint_callback is None:
             return False
-        # The final checkpoint is saved by the entrypoint after train() returns.
         return self.global_step % self.config.save_interval == 0 and self.global_step < self.config.max_steps
 
     def _run_validation(self) -> dict[str, float | int]:
         if self.eval_dataloader is None:
             raise RuntimeError("eval_dataloader is required for validation")
 
-        # Local import avoids a module-level circular import.
         from myqwen.training.evaluator import EvaluatorConfig, evaluate_causal_lm
 
         metrics = evaluate_causal_lm(
@@ -204,8 +243,10 @@ class Trainer:
         self.model.train()
         batch_iterator = cycle_dataloader(self.dataloader)
         self.optimizer.zero_grad(set_to_none=True)
+        reset_cuda_peak_memory(self.device)
 
         train_start_time = time.perf_counter()
+        start_tokens_seen = self.tokens_seen
         log_start_time = train_start_time
         interval_loss_sum = 0.0
         interval_tokens = 0
@@ -218,6 +259,10 @@ class Trainer:
             f"start_step={self.global_step} | max_steps={self.config.max_steps} | "
             f"grad_accum={self.config.gradient_accumulation_steps}"
         )
+        if self.config.device_peak_tflops is None:
+            print("MFU: disabled (set device_peak_tflops to enable)")
+        else:
+            print(f"MFU: enabled | device peak={self.config.device_peak_tflops:.2f} TFLOPs")
 
         if self.config.eval_interval is not None:
             print(
@@ -235,6 +280,7 @@ class Trainer:
                 batch = next(batch_iterator)
                 input_ids = self._move_batch(batch)
                 micro_batch_tokens = int(input_ids.numel())
+                self._prepare_mfu_estimator(input_ids.shape[1])
 
                 with self._autocast_context():
                     logits = self.model(input_ids)
@@ -295,7 +341,6 @@ class Trainer:
                 )
                 if grad_norm is not None:
                     message += f" | grad_norm {grad_norm:.4f}"
-                print(message)
 
                 train_metrics: dict[str, float | int] = {
                     "train/loss": mean_interval_loss,
@@ -305,6 +350,25 @@ class Trainer:
                 }
                 if grad_norm is not None:
                     train_metrics["train/grad_norm"] = grad_norm
+
+                peak_memory = self._update_training_peak_memory()
+                if peak_memory is not None:
+                    train_metrics["system/peak_memory_allocated_gib"] = self._run_peak_allocated_gib
+                    train_metrics["system/peak_memory_reserved_gib"] = self._run_peak_reserved_gib
+                    message += f" | peak_mem {self._run_peak_allocated_gib:.2f} GiB"
+
+                if self._flops_per_token is not None and self.config.device_peak_tflops is not None:
+                    current_tflops = achieved_tflops(tokens_per_second, self._flops_per_token)
+                    current_mfu = estimate_mfu(
+                        tokens_per_second,
+                        self._flops_per_token,
+                        self.config.device_peak_tflops,
+                    )
+                    train_metrics["train/achieved_tflops"] = current_tflops
+                    train_metrics["train/mfu"] = current_mfu
+                    message += f" | MFU {current_mfu * 100:.1f}%"
+
+                print(message)
                 self.logger.log(train_metrics, step=self.global_step)
 
                 interval_loss_sum = 0.0
@@ -315,6 +379,7 @@ class Trainer:
             if should_evaluate:
                 validation_metrics = self._run_validation()
                 total_validation_seconds += float(validation_metrics["elapsed_seconds"])
+                reset_cuda_peak_memory(self.device)
                 log_start_time = time.perf_counter()
 
             if self._should_save_periodic_checkpoint():
@@ -322,19 +387,49 @@ class Trainer:
 
         wall_elapsed = max(time.perf_counter() - train_start_time, 1e-12)
         training_elapsed = max(wall_elapsed - total_validation_seconds, 1e-12)
+        run_tokens = self.tokens_seen - start_tokens_seen
+        average_tokens_per_second = run_tokens / training_elapsed
 
         summary: dict[str, object] = {
             **self.state_dict(),
             "elapsed_seconds": wall_elapsed,
             "validation_seconds": total_validation_seconds,
-            "average_tokens_per_second": self.tokens_seen / training_elapsed,
+            "average_tokens_per_second": average_tokens_per_second,
         }
+
+        peak_memory = self._update_training_peak_memory()
+        if peak_memory is not None:
+            summary["peak_memory_allocated_gib"] = self._run_peak_allocated_gib
+            summary["peak_memory_reserved_gib"] = self._run_peak_reserved_gib
+
+        if self._flops_per_token is not None and self.config.device_peak_tflops is not None:
+            summary["estimated_flops_per_token"] = self._flops_per_token
+            summary["average_achieved_tflops"] = achieved_tflops(
+                average_tokens_per_second, self._flops_per_token
+            )
+            summary["average_mfu"] = estimate_mfu(
+                average_tokens_per_second,
+                self._flops_per_token,
+                self.config.device_peak_tflops,
+            )
 
         print("Training finished")
         print(
             f"steps={self.global_step} | tokens={self.tokens_seen:,} | elapsed={wall_elapsed:.2f}s | "
-            f"avg_tokens/s={summary['average_tokens_per_second']:,.0f}"
+            f"avg_tokens/s={average_tokens_per_second:,.0f}"
         )
+
+        if peak_memory is not None:
+            print(
+                f"peak training CUDA memory | allocated={self._run_peak_allocated_gib:.2f} GiB | "
+                f"reserved={self._run_peak_reserved_gib:.2f} GiB"
+            )
+
+        if "average_mfu" in summary:
+            print(
+                f"average compute | achieved={summary['average_achieved_tflops']:.2f} TFLOPs | "
+                f"MFU={summary['average_mfu'] * 100:.1f}%"
+            )
 
         if self.validation_history:
             last_validation = self.validation_history[-1]
