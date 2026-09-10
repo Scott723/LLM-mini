@@ -27,3 +27,6 @@ src/myqwen.egg-info/
 
 # log
 *.log
+
+#wandb
+wandb/
