@@ -25,6 +25,8 @@ EXPERIMENT_CONFIG = {
     "min_lr_ratio": 0.1,
     "max_grad_norm": 1.0,
 
+    "attention_backend": "sdpa",
+    "activation_checkpointing": False,
     "precision": "bf16",
     "device": "auto",
     "num_workers": 2,

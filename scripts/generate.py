@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eos-token-id", type=int, default=50256)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--precision", choices=["fp32", "bf16"], default="bf16")
+    parser.add_argument("--attention-backend", choices=["eager", "sdpa"], default="eager")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -44,6 +45,7 @@ def main() -> None:
     checkpoint = load_checkpoint(args.checkpoint)
     model_config = ModelConfig(**checkpoint["model_config"])
     model = CausalLM(model_config)
+    model.set_attention_backend(args.attention_backend)
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.to(device)
     model.eval()

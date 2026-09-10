@@ -86,6 +86,8 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument("--warmup-steps", type=int, default=None)
     parser.add_argument("--min-lr-ratio", type=float, default=None)
     parser.add_argument("--max-grad-norm", type=float, default=None)
+    parser.add_argument("--attention-backend", choices=["eager", "sdpa"], default=None)
+    parser.add_argument("--activation-checkpointing", action=argparse.BooleanOptionalAction, default=None)
 
     parser.add_argument("--precision", choices=["fp32", "bf16"], default=None)
     parser.add_argument("--device", type=str, default=None)
@@ -168,6 +170,8 @@ def resolve_settings(cli_args: argparse.Namespace, defaults: dict) -> argparse.N
     settings.setdefault("wandb_run_name", None)
     settings.setdefault("wandb_entity", None)
     settings.setdefault("device_peak_tflops", None)
+    settings.setdefault("attention_backend", "eager")
+    settings.setdefault("activation_checkpointing", False)
 
     return argparse.Namespace(**settings)
 
@@ -194,6 +198,8 @@ def validate_settings(args: argparse.Namespace, model_config) -> None:
         raise ValueError("save_interval must be positive")
     if args.device_peak_tflops is not None and args.device_peak_tflops <= 0:
         raise ValueError("device_peak_tflops must be positive or omitted")
+    if args.attention_backend not in {"eager", "sdpa"}:
+        raise ValueError("attention_backend must be 'eager' or 'sdpa'")
 
 
 def select_shards(data_dir: str | Path, pattern: str, max_shards: int | None) -> list[Path]:
@@ -247,6 +253,8 @@ def build_run_config(
             "device": args.device,
             "seed": args.seed,
             "device_peak_tflops": args.device_peak_tflops,
+            "attention_backend": args.attention_backend,
+            "activation_checkpointing": args.activation_checkpointing,
         },
         "data": {
             "train_data_dir": str(resolve_project_path(args.data_dir)),
@@ -357,6 +365,8 @@ def main() -> None:
     print(f"experiment: {args.name}")
     print(f"experiment config: {Path(args.experiment).resolve()}")
     print(f"model config: {model_config_path}")
+    print(f"attention backend: {args.attention_backend}")
+    print(f"activation checkpointing: {'enabled' if args.activation_checkpointing else 'disabled'}")
     print(f"training shards: {len(train_shard_paths)}")
     print(f"dataset sequences: {len(train_dataset):,}")
     print(f"sequence length: {args.seq_len}")
@@ -402,6 +412,8 @@ def main() -> None:
         return
 
     model = CausalLM(model_config)
+    model.set_attention_backend(args.attention_backend)
+    model.set_activation_checkpointing(args.activation_checkpointing)
     total_params, trainable_params = count_trainable_parameters(model)
     print(f"parameters: {total_params:,} total | {trainable_params:,} trainable")
 

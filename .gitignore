@@ -30,3 +30,6 @@ src/myqwen.egg-info/
 
 #wandb
 wandb/
+
+#tests
+tests/
